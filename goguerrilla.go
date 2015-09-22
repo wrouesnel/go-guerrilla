@@ -1,4 +1,4 @@
-/** 
+/**
 Go-Guerrilla SMTPd
 A minimalist SMTP server written in Go, made for receiving large volumes of mail.
 Works either as a stand-alone or in conjunction with Nginx SMTP proxy.
@@ -45,7 +45,7 @@ $ go get github.com/ziutek/mymysql/autorc
 $ go get github.com/ziutek/mymysql/godrv
 $ go get github.com/sloonz/go-iconv
 
-TODO: after failing tls, 
+TODO: after failing tls,
 
 patch:
 rebuild all: go build -a -v new.go
@@ -55,6 +55,7 @@ rebuild all: go build -a -v new.go
 package main
 
 import (
+	log "github.com/Sirupsen/logrus"
 	"bufio"
 	"bytes"
 	"compress/zlib"
@@ -63,18 +64,17 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	//"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/garyburd/redigo/redis"
 	"github.com/sloonz/go-iconv"
 	"github.com/sloonz/go-qprintable"
-	"github.com/ziutek/mymysql/autorc"
-	_ "github.com/ziutek/mymysql/godrv"
+	//"github.com/ziutek/mymysql/autorc"
+	//_ "github.com/ziutek/mymysql/godrv"
 	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -116,19 +116,20 @@ var sem chan int // currently active clients
 var SaveMailChan chan *Client // workers for saving mail
 // defaults. Overwrite any of these in the configure() function which loads them from a json file
 var gConfig = map[string]string{
-	"GSMTP_MAX_SIZE":         "131072",
-	"GSMTP_HOST_NAME":        "server.example.com", // This should also be set to reflect your RDNS
-	"GSMTP_VERBOSE":          "Y",
-	"GSMTP_LOG_FILE":         "",    // Eg. /var/log/goguerrilla.log or leave blank if no logging
-	"GSMTP_TIMEOUT":          "100", // how many seconds before timeout.
-	"MYSQL_HOST":             "127.0.0.1:3306",
-	"MYSQL_USER":             "gmail_mail",
-	"MYSQL_PASS":             "ok",
-	"MYSQL_DB":               "gmail_mail",
+	"GSMTP_MAX_SIZE":  "131072",
+	"GSMTP_HOST_NAME": "server.example.com", // This should also be set to reflect your RDNS
+	"GSMTP_VERBOSE":   "Y",
+	"GSMTP_LOG_FILE":  "",    // Eg. /var/log/goguerrilla.log or leave blank if no logging
+	"GSMTP_TIMEOUT":   "100", // how many seconds before timeout.
+	//	"MYSQL_HOST":             "127.0.0.1:3306",
+	//	"MYSQL_USER":             "gmail_mail",
+	//	"MYSQL_PASS":             "ok",
+	//	"MYSQL_DB":               "gmail_mail",
 	"GM_MAIL_TABLE":          "new_mail",
-	"GSTMP_LISTEN_INTERFACE": "0.0.0.0:25",
-	"GSMTP_PUB_KEY":          "/etc/ssl/certs/ssl-cert-snakeoil.pem",
-	"GSMTP_PRV_KEY":          "/etc/ssl/private/ssl-cert-snakeoil.key",
+	"GSMTP_LISTEN_INTERFACE": "0.0.0.0:25",
+	"GSMTP_USE_TLS":		  "N",
+	"GSMTP_PUB_KEY":          "ssl-cert-snakeoil.pem",
+	"GSMTP_PRV_KEY":          "ssl-cert-snakeoil.key",
 	"GM_ALLOWED_HOSTS":       "guerrillamail.de,guerrillamailblock.com",
 	"GM_PRIMARY_MAIL_HOST":   "guerrillamail.com",
 	"GM_MAX_CLIENTS":         "500",
@@ -144,44 +145,43 @@ type redisClient struct {
 	time  int
 }
 
-func logln(level int, s string) {
-
-	if gConfig["GSMTP_VERBOSE"] == "Y" {
-		fmt.Println(s)
-	}
-	if level == 2 {
-		log.Fatalf(s)
-	}
-	if len(gConfig["GSMTP_LOG_FILE"]) > 0 {
-		log.Println(s)
-	}
-}
-
 func configure() {
-	var configFile, verbose, iface string
+	var verbose, iface string
+	var tls bool
 	log.SetOutput(os.Stdout)
 	// parse command line arguments
-	flag.StringVar(&configFile, "config", "goguerrilla.conf", "Path to the configuration file")
+	//flag.StringVar(&configFile, "config", "goguerrilla.conf", "Path to the configuration file")
 	flag.StringVar(&verbose, "v", "n", "Verbose, [y | n] ")
 	flag.StringVar(&iface, "if", "", "Interface and port to listen on, eg. 127.0.0.1:2525 ")
+	flag.BoolVar(&tls, "tls", "", "Expose a TLS endpoint")
 	flag.Parse()
-	// load in the config.
-	b, err := ioutil.ReadFile(configFile)
-	if err != nil {
-		log.Fatalln("Could not read config file")
-	}
-	var myConfig map[string]string
-	err = json.Unmarshal(b, &myConfig)
-	if err != nil {
-		log.Fatalln("Could not parse config file")
-	}
-	for k, v := range myConfig {
-		gConfig[k] = v
-	}
-	gConfig["GSMTP_VERBOSE"] = strings.ToUpper(verbose)
+
+	// Accept the listen interface
 	if len(iface) > 0 {
-		gConfig["GSTMP_LISTEN_INTERFACE"] = iface
+		gConfig["GSMTP_LISTEN_INTERFACE"] = iface
 	}
+
+	gConfig["GSMTP_VERBOSE"] = strings.ToUpper(verbose)
+
+	if tls {
+		gConfig["GSMTP_USE_TLS"] = "Y"
+	}
+
+	// load in the config.
+	//	b, err := ioutil.ReadFile(configFile)
+	//	if err != nil {
+	//		return
+	//		//log.Fatalln("Could not read config file")
+	//	}
+	//	var myConfig map[string]string
+	//	err = json.Unmarshal(b, &myConfig)
+	//	if err != nil {
+	//		log.Fatalln("Could not parse config file")
+	//	}
+	//	for k, v := range myConfig {
+	//		gConfig[k] = v
+	//	}
+
 	// map the allow hosts for easy lookup
 	if arr := strings.Split(gConfig["GM_ALLOWED_HOSTS"], ","); len(arr) > 0 {
 		for i := 0; i < len(arr); i++ {
@@ -222,12 +222,7 @@ func configure() {
 
 func main() {
 	configure()
-	cert, err := tls.LoadX509KeyPair(gConfig["GSMTP_PUB_KEY"], gConfig["GSMTP_PRV_KEY"])
-	if err != nil {
-		logln(2, fmt.Sprintf("There was a problem with loading the certificate: %s", err))
-	}
-	TLSconfig = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.VerifyClientCertIfGiven, ServerName: gConfig["GSMTP_HOST_NAME"]}
-	TLSconfig.Rand = rand.Reader
+
 	// start some savemail workers
 	for i := 0; i < 3; i++ {
 		go saveMail()
@@ -235,22 +230,39 @@ func main() {
 	if gConfig["NGINX_AUTH_ENABLED"] == "Y" {
 		go nginxHTTPAuth()
 	}
+
 	// Start listening for SMTP connections
-	listener, err := net.Listen("tcp", gConfig["GSTMP_LISTEN_INTERFACE"])
-	if err != nil {
-		logln(2, fmt.Sprintf("Cannot listen on port, %v", err))
+	var listener net.Listener
+	var err error
+	if gConfig["GSMTP_USE_TLS"] == "Y" {
+		cert, err := tls.LoadX509KeyPair(gConfig["GSMTP_PUB_KEY"], gConfig["GSMTP_PRV_KEY"])
+		if err != nil {
+			log.Fatalln(2, fmt.Sprintf("There was a problem with loading the certificate: %s", err))
+		}
+		TLSconfig = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.VerifyClientCertIfGiven, ServerName: gConfig["GSMTP_HOST_NAME"]}
+		TLSconfig.Rand = rand.Reader
+
+		listener, err = tls.Listen("tcp", gConfig["GSTMP_LISTEN_INTERFACE"]. TLSconfig)
 	} else {
-		logln(1, fmt.Sprintf("Listening on tcp %s", gConfig["GSTMP_LISTEN_INTERFACE"]))
+		listener, err = net.Listen("tcp", gConfig["GSTMP_LISTEN_INTERFACE"])
 	}
+
+	if err != nil {
+		log.Fatalln(fmt.Sprintf("Cannot listen on port, %v", err))
+	} else {
+		log.Infoln(fmt.Sprintf("Listening on tcp %s", gConfig["GSTMP_LISTEN_INTERFACE"]))
+	}
+
 	var clientId int64
 	clientId = 1
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			logln(1, fmt.Sprintf("Accept error: %s", err))
+			log.Infoln(fmt.Sprintf("Accept error: %s", err))
 			continue
 		}
-		logln(1, fmt.Sprintf(" There are now "+strconv.Itoa(runtime.NumGoroutine())+" serving goroutines"))
+		log.Errorln(1, fmt.Sprintf(" There are now "+strconv.Itoa(runtime.NumGoroutine())+" serving goroutines"))
 		sem <- 1 // Wait for active queue to drain.
 		go handleClient(&Client{
 			conn:        conn,
@@ -279,7 +291,7 @@ func handleClient(client *Client) {
 		case 1:
 			input, err := readSmtp(client)
 			if err != nil {
-				logln(1, fmt.Sprintf("Read error: %v", err))
+				log.Infoln(fmt.Sprintf("Read error: %v", err))
 				if err == io.EOF {
 					// client closed the connection already
 					return
@@ -360,7 +372,7 @@ func handleClient(client *Client) {
 					responseAdd(client, "554 Error: transaction failed, blame it on the weather")
 				}
 			} else {
-				logln(1, fmt.Sprintf("DATA read error: %v", err))
+				log.Infoln(fmt.Sprintf("DATA read error: %v", err))
 			}
 			client.state = 1
 		case 3:
@@ -374,7 +386,7 @@ func handleClient(client *Client) {
 				client.bufout = bufio.NewWriter(client.conn)
 				client.tls_on = true
 			} else {
-				logln(1, fmt.Sprintf("Could not TLS handshake:%v", err))
+				log.Infoln(fmt.Sprintf("Could not TLS handshake:%v", err))
 			}
 			advertiseTls = ""
 			client.state = 1
@@ -470,31 +482,31 @@ func responseWrite(client *Client) (err error) {
 
 func saveMail() {
 	var to string
-	var err error
-	var body string
-	var redis_err error
+	//var err error
+	//var body string
+	//	var redis_err error
 	var length int
-	redis := &redisClient{}
-	db := autorc.New("tcp", "", gConfig["MYSQL_HOST"], gConfig["MYSQL_USER"], gConfig["MYSQL_PASS"], gConfig["MYSQL_DB"])
-	db.Register("set names utf8")
-	sql := "INSERT INTO " + gConfig["GM_MAIL_TABLE"] + " "
-	sql += "(`date`, `to`, `from`, `subject`, `body`, `charset`, `mail`, `spam_score`, `hash`, `content_type`, `recipient`, `has_attach`, `ip_addr`)"
-	sql += " values (NOW(), ?, ?, ?, ? , 'UTF-8' , ?, 0, ?, '', ?, 0, ?)"
-	ins, sql_err := db.Prepare(sql)
-	if sql_err != nil {
-		logln(2, fmt.Sprintf("Sql statement incorrect: %s", sql_err))
-	}
-	sql = "UPDATE gm2_setting SET `setting_value` = `setting_value`+1 WHERE `setting_name`='received_emails' LIMIT 1"
-	incr, sql_err := db.Prepare(sql)
-	if sql_err != nil {
-		logln(2, fmt.Sprintf("Sql statement incorrect: %s", sql_err))
-	}
+	//	redis := &redisClient{}
+	//	db := autorc.New("tcp", "", gConfig["MYSQL_HOST"], gConfig["MYSQL_USER"], gConfig["MYSQL_PASS"], gConfig["MYSQL_DB"])
+	//	db.Register("set names utf8")
+	//	sql := "INSERT INTO " + gConfig["GM_MAIL_TABLE"] + " "
+	//	sql += "(`date`, `to`, `from`, `subject`, `body`, `charset`, `mail`, `spam_score`, `hash`, `content_type`, `recipient`, `has_attach`, `ip_addr`)"
+	//	sql += " values (NOW(), ?, ?, ?, ? , 'UTF-8' , ?, 0, ?, '', ?, 0, ?)"
+	//	ins, sql_err := db.Prepare(sql)
+	//	if sql_err != nil {
+	//		logln(2, fmt.Sprintf("Sql statement incorrect: %s", sql_err))
+	//	}
+	//	sql = "UPDATE gm2_setting SET `setting_value` = `setting_value`+1 WHERE `setting_name`='received_emails' LIMIT 1"
+	//	incr, sql_err := db.Prepare(sql)
+	//	if sql_err != nil {
+	//		logln(2, fmt.Sprintf("Sql statement incorrect: %s", sql_err))
+	//	}
 
 	//  receives values from the channel repeatedly until it is closed.
 	for {
 		client := <-SaveMailChan
 		if user, _, addr_err := validateEmailData(client); addr_err != nil { // user, host, addr_err
-			logln(1, fmt.Sprintln("mail_from didnt validate: %v", addr_err)+" client.mail_from:"+client.mail_from)
+			log.Infoln(fmt.Sprintln("mail_from didnt validate: %v", addr_err)+" client.mail_from:"+client.mail_from)
 			// notify client that a save completed, -1 = error
 			client.savedNotify <- -1
 			continue
@@ -512,38 +524,58 @@ func saveMail() {
 			gConfig["GSMTP_HOST_NAME"] + ";\r\n"
 		add_head += "	" + time.Now().Format(time.RFC1123Z) + "\r\n"
 		// compress to save space
-		client.data = compress(add_head + client.data)
-		body = "gzencode"
-		redis_err = redis.redisConnection()
-		if redis_err == nil {
-			_, do_err := redis.conn.Do("SETEX", client.hash, 3600, client.data)
-			if do_err == nil {
-				client.data = ""
-				body = "redis"
-			}
-		} else {
-			logln(1, fmt.Sprintf("redis: %v", redis_err))
-		}
+		//		client.data = compress(add_head + client.data)
+		//body = "gzencode"
+		//		redis_err = redis.redisConnection()
+		//		if redis_err == nil {
+		//			_, do_err := redis.conn.Do("SETEX", client.hash, 3600, client.data)
+		//			if do_err == nil {
+		//				client.data = ""
+		//				body = "redis"
+		//			}
+		//		} else {
+		//			logln(1, fmt.Sprintf("redis: %v", redis_err))
+		//		}
 		// bind data to cursor
-		ins.Bind(
-			to,
-			client.mail_from,
-			client.subject,
-			body,
-			client.data,
-			client.hash,
-			to,
-			client.address)
-		// save, discard result
-		_, _, err = ins.Exec()
+		//		ins.Bind(
+		//			to,
+		//			client.mail_from,
+		//			client.subject,
+		//			body,
+		//			client.data,
+		//			client.hash,
+		//			to,
+		//			client.address)
+		//		// save, discard result
+		//		_, _, err = ins.Exec()
+
+		// Just write the mail out to a file.
+		f, err := os.OpenFile(fmt.Sprintf("%s<-%s.%s.eml", to, client.mail_from, time.Now().Format(time.RFC3339)),
+			os.O_CREATE|os.O_TRUNC|os.O_WRONLY,
+			os.FileMode(0777))
 		if err != nil {
-			logln(1, fmt.Sprintf("Database error, %v %v", err))
+			log.Infoln(fmt.Sprintf("Database error, %v %v", err))
+			client.savedNotify <- -1
+		}
+
+		fmt.Fprintln(f, to)
+		fmt.Fprintln(f, client.mail_from)
+		fmt.Fprintln(f, client.subject)
+		//fmt.Fprintf(f, "%s", body)
+		fmt.Fprintln(f, client.data)
+		fmt.Fprintln(f, client.hash)
+		fmt.Fprintln(f, client.address)
+
+		f.Close()
+
+		if err != nil {
+			log.Infoln(fmt.Sprintf("Database error, %v %v", err))
 			client.savedNotify <- -1
 		} else {
-			logln(1, "Email saved "+client.hash+" len:"+strconv.Itoa(length))
-			_, _, err = incr.Exec()
+			log.Infoln("Email saved "+client.hash+" len:"+strconv.Itoa(length))
+			//_, _, err = incr.Exec()
 			if err != nil {
-				logln(1, fmt.Sprintf("Failed to incr count:", err))
+				log.Infoln(fmt.Sprintf("Failed to incr count:", err))
 			}
 			client.savedNotify <- 1
 		}
@@ -575,9 +607,9 @@ func validateEmailData(client *Client) (user string, host string, addr_err error
 	}
 	client.rcpt_to = user + "@" + host
 	// check if on allowed hosts
-	if allowed := allowedHosts[host]; !allowed {
-		return user, host, errors.New("invalid host:" + host)
-	}
+	//if allowed := allowedHosts[host]; !allowed {
+	//	return user, host, errors.New("invalid host:" + host)
+	//}
 	return user, host, addr_err
 }
 
