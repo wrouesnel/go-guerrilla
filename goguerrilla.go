@@ -126,10 +126,10 @@ var gConfig = map[string]string{
 	//	"MYSQL_PASS":             "ok",
 	//	"MYSQL_DB":               "gmail_mail",
 	"GM_MAIL_TABLE":          "new_mail",
-	"GSMTP_LISTEN_INTERFACE": "0.0.0.0:25",
+	"GSMTP_LISTEN_INTERFACE": "0.0.0.0:2525",
 	"GSMTP_USE_TLS":		  "N",
-	"GSMTP_PUB_KEY":          "ssl-cert-snakeoil.pem",
-	"GSMTP_PRV_KEY":          "ssl-cert-snakeoil.key",
+	"GSMTP_PUB_KEY":          "",
+	"GSMTP_PRV_KEY":          "",
 	"GM_ALLOWED_HOSTS":       "guerrillamail.de,guerrillamailblock.com",
 	"GM_PRIMARY_MAIL_HOST":   "guerrillamail.com",
 	"GM_MAX_CLIENTS":         "500",
@@ -153,7 +153,7 @@ func configure() {
 	//flag.StringVar(&configFile, "config", "goguerrilla.conf", "Path to the configuration file")
 	flag.StringVar(&verbose, "v", "n", "Verbose, [y | n] ")
 	flag.StringVar(&iface, "if", "", "Interface and port to listen on, eg. 127.0.0.1:2525 ")
-	flag.BoolVar(&tls, "tls", "", "Expose a TLS endpoint")
+	flag.BoolVar(&tls, "tls", false, "Expose a TLS endpoint")
 	flag.Parse()
 
 	// Accept the listen interface
@@ -242,15 +242,15 @@ func main() {
 		TLSconfig = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.VerifyClientCertIfGiven, ServerName: gConfig["GSMTP_HOST_NAME"]}
 		TLSconfig.Rand = rand.Reader
 
-		listener, err = tls.Listen("tcp", gConfig["GSTMP_LISTEN_INTERFACE"]. TLSconfig)
+		listener, err = tls.Listen("tcp", gConfig["GSMTP_LISTEN_INTERFACE"], TLSconfig)
 	} else {
-		listener, err = net.Listen("tcp", gConfig["GSTMP_LISTEN_INTERFACE"])
+		listener, err = net.Listen("tcp", gConfig["GSMTP_LISTEN_INTERFACE"])
 	}
 
 	if err != nil {
 		log.Fatalln(fmt.Sprintf("Cannot listen on port, %v", err))
 	} else {
-		log.Infoln(fmt.Sprintf("Listening on tcp %s", gConfig["GSTMP_LISTEN_INTERFACE"]))
+		log.Infoln(fmt.Sprintf("Listening on tcp %s", gConfig["GSMTP_LISTEN_INTERFACE"]))
 	}
 
 	var clientId int64
@@ -283,6 +283,9 @@ func handleClient(client *Client) {
 	greeting := "220 " + gConfig["GSMTP_HOST_NAME"] +
 		" SMTP Guerrilla-SMTPd #" + strconv.FormatInt(client.clientId, 10) + " (" + strconv.Itoa(len(sem)) + ") " + time.Now().Format(time.RFC1123Z)
 	advertiseTls := "250-STARTTLS\r\n"
+	if gConfig["GSMTP_PUB_KEY"] == "" || gConfig["GSMTP_PRV_KEY"] == "" {
+		advertiseTls = ""
+	}
 	for i := 0; i < 100; i++ {
 		switch client.state {
 		case 0:
@@ -344,7 +347,7 @@ func handleClient(client *Client) {
 			case (strings.Index(cmd, "STARTTLS") == 0) && !client.tls_on:
 				responseAdd(client, "220 Ready to start TLS")
 				// go to start TLS state
-				client.state = 3
+				//client.state = 3
 			case strings.Index(cmd, "QUIT") == 0:
 				responseAdd(client, "221 Bye")
 				killClient(client)
